@@ -11,21 +11,16 @@ fancy_echo() {
   printf "\n$fmt\n" "$@"
 }
 
-append_to_zshrc() {
-  local text="$1" zshrc
+append_to_bash_profile() {
+  local text="$1"
+  local file=".bash_profile"
   local skip_new_line="${2:-0}"
 
-  if [ -w "$HOME/.zshrc.local" ]; then
-    zshrc="$HOME/.zshrc.local"
-  else
-    zshrc="$HOME/.zshrc"
-  fi
-
-  if ! grep -Fqs "$text" "$zshrc"; then
+  if ! grep -Fqs "$text" "$file"; then
     if [ "$skip_new_line" -eq 1 ]; then
-      printf "%s\n" "$text" >> "$zshrc"
+      printf "%s\n" "$text" >> "$file"
     else
-      printf "\n%s\n" "$text" >> "$zshrc"
+      printf "\n%s\n" "$text" >> "$file"
     fi
   fi
 }
@@ -39,12 +34,12 @@ if [ ! -d "$HOME/.bin/" ]; then
   mkdir "$HOME/.bin"
 fi
 
-if [ ! -f "$HOME/.zshrc" ]; then
-  touch "$HOME/.zshrc"
+if [ ! -f "$HOME/.bash_profile" ]; then
+  touch "$HOME/.bash_profile"
 fi
 
 # shellcheck disable=SC2016
-append_to_zshrc 'export PATH="$HOME/.bin:$PATH"'
+append_to_bash_profile 'export PATH="$HOME/.bin:$PATH"'
 
 HOMEBREW_PREFIX="/usr/local"
 
@@ -58,46 +53,15 @@ else
   sudo chown -R "$LOGNAME:admin" "$HOMEBREW_PREFIX"
 fi
 
-update_shell() {
-  local shell_path;
-  shell_path="$(which zsh)"
-
-  fancy_echo "Changing your shell to zsh ..."
-  if ! grep "$shell_path" /etc/shells > /dev/null 2>&1 ; then
-    fancy_echo "Adding '$shell_path' to /etc/shells"
-    sudo sh -c "echo $shell_path >> /etc/shells"
-  fi
-  sudo chsh -s "$shell_path" "$USER"
-}
-
-case "$SHELL" in
-  */zsh)
-    if [ "$(which zsh)" != '/usr/local/bin/zsh' ] ; then
-      update_shell
-    fi
-    ;;
-  *)
-    update_shell
-    ;;
-esac
-
-gem_install_or_update() {
-  if gem list "$1" --installed > /dev/null; then
-    gem update "$@"
-  else
-    gem install "$@"
-  fi
-}
-
 if ! command -v brew >/dev/null; then
   fancy_echo "Installing Homebrew ..."
     curl -fsS \
       'https://raw.githubusercontent.com/Homebrew/install/master/install' | ruby
 
-    append_to_zshrc '# recommended by brew doctor'
+    append_to_bash_profile '# recommended by brew doctor'
 
     # shellcheck disable=SC2016
-    append_to_zshrc 'export PATH="/usr/local/bin:$PATH"' 1
+    append_to_bash_profile 'export PATH="/usr/local/bin:$PATH"' 1
 
     export PATH="/usr/local/bin:$PATH"
 fi
@@ -110,101 +74,23 @@ fi
 fancy_echo "Updating Homebrew formulae ..."
 brew update --force # https://github.com/Homebrew/brew/issues/1151
 brew bundle --file=- <<EOF
-tap "thoughtbot/formulae"
 tap "homebrew/services"
-tap "universal-ctags/universal-ctags"
+tap "homebrew/bundle"
 tap "caskroom/cask"
+tap "caskroom/drivers"
+tap "caskroom/versions"
 
-# Unix
-brew "universal-ctags", args: ["HEAD"]
+# Unix CLI
 brew "git"
-brew "openssl"
-brew "rcm"
-brew "reattach-to-user-namespace"
-brew "the_silver_searcher"
-brew "tmux"
 brew "vim"
-brew "watchman"
-brew "zsh"
+brew "thefuck"
 
-# Heroku
-brew "heroku"
-brew "parity"
-
-# GitHub
-brew "hub"
-
-# Image manipulation
-brew "imagemagick"
-
-# Testing
-brew "qt@5.5" if MacOS::Xcode.installed?
+# Networking
+brew "mtr"
+brew "nmap"
 
 # Programming language prerequisites and package managers
-brew "libyaml" # should come after openssl
-brew "coreutils"
-brew "yarn"
-cask "gpg-suite"
-
-# Databases
-brew "postgres", restart_service: :changed
-brew "redis", restart_service: :changed
+brew "node@8"
+# Install after node (and just use the existing LTS)
+brew "yarn", args: ["without-node"]
 EOF
-
-if brew list | grep --silent "qt@5.5"; then
-  fancy_echo "Symlink qmake binary to /usr/local/bin for Capybara Webkit..."
-  brew unlink qt@5.5
-  brew link --force qt@5.5
-fi
-
-fancy_echo "Update heroku binary..."
-brew unlink heroku
-brew link --force heroku
-
-fancy_echo "Configuring asdf version manager..."
-if [ ! -d "$HOME/.asdf" ]; then
-  git clone https://github.com/asdf-vm/asdf.git ~/.asdf --branch v0.3.0
-  append_to_zshrc "source $HOME/.asdf/asdf.sh" 1
-fi
-
-install_asdf_plugin() {
-  local name="$1"
-  local url="$2"
-
-  if ! asdf plugin-list | grep -Fq "$name"; then
-    asdf plugin-add "$name" "$url"
-  fi
-}
-
-# shellcheck disable=SC1090
-source "$HOME/.asdf/asdf.sh"
-install_asdf_plugin "ruby" "https://github.com/asdf-vm/asdf-ruby.git"
-install_asdf_plugin "nodejs" "https://github.com/asdf-vm/asdf-nodejs.git"
-
-install_asdf_language() {
-  local language="$1"
-  local version
-  version="$(asdf list-all "$language" | tail -1)"
-
-  if ! asdf list "$language" | grep -Fq "$version"; then
-    asdf install "$language" "$version"
-    asdf global "$language" "$version"
-  fi
-}
-
-fancy_echo "Installing latest Ruby..."
-install_asdf_language "ruby"
-gem update --system
-gem_install_or_update "bundler"
-number_of_cores=$(sysctl -n hw.ncpu)
-bundle config --global jobs $((number_of_cores - 1))
-
-fancy_echo "Installing latest Node..."
-bash "$HOME/.asdf/plugins/nodejs/bin/import-release-team-keyring"
-install_asdf_language "nodejs"
-
-if [ -f "$HOME/.laptop.local" ]; then
-  fancy_echo "Running your customizations from ~/.laptop.local ..."
-  # shellcheck disable=SC1090
-  . "$HOME/.laptop.local"
-fi
